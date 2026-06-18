@@ -49,9 +49,6 @@ Examples are available at '**WIZnet-PICO-C/examples/**' directory. As of now, fo
 
 - [**CAN**][link-can]
 - [**DHCP & DNS**][link-dhcp_dns]
-- [**FTP**][link-ftp]
-	- [**Client**][link-ftp_client]
-	- [**Server**][link-ftp_server]
 - [**HTTP**][link-http]
 	- [**Server**][link-http_server]
 - [**Loopback**][link-loopback]
@@ -465,9 +462,6 @@ Link
 [link-w6300-evb-pico]: https://docs.wiznet.io/Product/iEthernet/W6300/w6300-evb-pico
 [link-CAN]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/can
 [link-dhcp_dns]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/dhcp_dns
-[link-ftp]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/ftp
-[link-ftp_client]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/ftp/client
-[link-ftp_server]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/ftp/server
 [link-http]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/http
 [link-http_server]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/http/server
 [link-loopback]: https://github.com/WIZnet-ioNIC/WIZnet-PICO-C/tree/main/examples/loopback
