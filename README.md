@@ -1,6 +1,6 @@
 # Getting Started with NTP Server Examples
 
-These sections will guide you through a series of steps from configuring development environment to running ethernet examples using the **WIZnet's ethernet products** and **WIZnet's GNSS products**.
+These sections will guide you through a series of steps from configuring development environment to running ethernet examples using the **WIZnet's ethernet products** and **Waveshare's GNSS products**.
 
 - [Getting Started with NTP Server Examples](#getting-started-with-ntp-server-examples)
   - [Development environment configuration](#development-environment-configuration)
