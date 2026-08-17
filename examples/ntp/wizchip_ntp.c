@@ -482,7 +482,8 @@ int main() {
 
     gpio_init(25);
     gpio_set_dir(25, GPIO_OUT);
-    while ((uint32_t)SYSTEM_BOOT_AWAIT_MS > to_ms_since_boot(get_absolute_time())) {
+    while (sys_time == (time_t)UNIX_INIT_SECOUNDS ||
+           (uint32_t)SYSTEM_BOOT_AWAIT_MS > to_ms_since_boot(get_absolute_time())) {
         gpio_put(25, true);
         sleep_ms(1000);
         gpio_put(25, false);
