@@ -20,6 +20,7 @@
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/uart.h"
+#include "hardware/watchdog.h"
 
 #include "port_common.h"
 #include "wizchip_conf.h"
@@ -59,7 +60,7 @@
 #define BUFFSIZE 1100
 
 
-/* SNTP */
+/* NTP */
 #define UNIX_INIT_SECOUNDS 1780000000
 #define UNIX_NTP_DIFF_SECOUNDS  2208988800
 #define SNTP_LEAP 0
@@ -70,6 +71,11 @@
 #define SNTP_POLL_INTERVALL 0
 #define SNTP_PACKET_SIZE 48
 #define MICROSECOND 1000000
+
+
+/* System Reboot Par milliseconds*/
+#define SYSTEM_REBOOT_MS 604800000
+
 
 /* main */
 
@@ -472,7 +478,7 @@ int main() {
 
     sleep_ms(1000);
     
-    /* SNTP */
+    /* NTP */
     check_loopback_mode_W6x00();
     uint8_t status;
     static uint8_t destip[16] = {0,};
@@ -483,6 +489,11 @@ int main() {
     uint8_t buf_temp[SNTP_PACKET_SIZE];
 
     while (true) {
+        if ((uint32_t)SYSTEM_REBOOT_MS < to_ms_since_boot(get_absolute_time())) {
+            watchdog_enable(1, 1);
+            while (1);
+        }
+
         getsockopt(SOCKET_NTP, SO_STATUS, &status);
         if (0 == strcmp(SOCK_UDP, &status)) {
             continue;
