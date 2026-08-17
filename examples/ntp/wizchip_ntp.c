@@ -73,6 +73,10 @@
 #define MICROSECOND 1000000
 
 
+/* System Boot Await milliseconds*/
+#define SYSTEM_BOOT_AWAIT_MS 60000
+
+
 /* System Reboot Par milliseconds*/
 #define SYSTEM_REBOOT_MS 604800000
 
@@ -476,7 +480,15 @@ int main() {
     int doorbell_exit = multicore_doorbell_claim_unused(0b01, true);
     multicore_doorbell_clear_current_core(doorbell_exit);
 
-    sleep_ms(1000);
+    gpio_init(25);
+    gpio_set_dir(25, GPIO_OUT);
+    while ((uint32_t)SYSTEM_BOOT_AWAIT_MS > to_ms_since_boot(get_absolute_time())) {
+        gpio_put(25, true);
+        sleep_ms(1000);
+        gpio_put(25, false);
+        sleep_ms(1000);
+    }
+    gpio_put(25, true);
     
     /* NTP */
     check_loopback_mode_W6x00();
