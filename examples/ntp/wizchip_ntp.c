@@ -19,6 +19,7 @@
 
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/resets.h"
 #include "hardware/uart.h"
 #include "hardware/watchdog.h"
 
@@ -456,6 +457,11 @@ void thread_gnss() {
 
 int main() {
     /* Initialize */
+    reset_block_num(RESET_PWM);
+    unreset_block_num_wait_blocking(RESET_PWM);
+    reset_block_mask((1u << RESET_PWM) | (1u << RESET_ADC));
+    unreset_block_mask_wait_blocking((1u << RESET_PWM) | (1u << RESET_ADC));
+
     stdio_init_all();
 
     sleep_ms(3000);
@@ -502,11 +508,6 @@ int main() {
     uint8_t buf_temp[SNTP_PACKET_SIZE];
 
     while (true) {
-        if ((uint32_t)SYSTEM_REBOOT_MS < to_ms_since_boot(get_absolute_time())) {
-            watchdog_enable(1, 1);
-            while (1);
-        }
-
         getsockopt(SOCKET_NTP, SO_STATUS, &status);
         if (0 == strcmp(SOCK_UDP, &status)) {
             continue;
@@ -591,6 +592,11 @@ int main() {
                     ret = sendto(SOCKET_NTP, sent_message + sent_size, sent_message_len - sent_size, destip, destport, addr_len);
                     if(ret < 0) return ret;
                     sent_size += ret; // Don't care SOCKERR_BUSY, because it is zero.
+                }
+                
+                if ((uint32_t)SYSTEM_REBOOT_MS < to_ms_since_boot(get_absolute_time())) {
+                    watchdog_enable(100,1);
+                    while (true) ;
                 }
             }
             break;
