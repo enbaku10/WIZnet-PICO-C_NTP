@@ -19,7 +19,9 @@
 
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/resets.h"
 #include "hardware/uart.h"
+#include "hardware/watchdog.h"
 
 #include "port_common.h"
 #include "wizchip_conf.h"
@@ -59,7 +61,7 @@
 #define BUFFSIZE 1100
 
 
-/* SNTP */
+/* NTP */
 #define UNIX_INIT_SECOUNDS 1780000000
 #define UNIX_NTP_DIFF_SECOUNDS  2208988800
 #define SNTP_LEAP 0
@@ -70,6 +72,15 @@
 #define SNTP_POLL_INTERVALL 0
 #define SNTP_PACKET_SIZE 48
 #define MICROSECOND 1000000
+
+
+/* System Boot Await milliseconds*/
+#define SYSTEM_BOOT_AWAIT_MS 60000
+
+
+/* System Reboot Par milliseconds*/
+#define SYSTEM_REBOOT_MS 604800000
+
 
 /* main */
 
@@ -446,6 +457,11 @@ void thread_gnss() {
 
 int main() {
     /* Initialize */
+    reset_block_num(RESET_PWM);
+    unreset_block_num_wait_blocking(RESET_PWM);
+    reset_block_mask((1u << RESET_PWM) | (1u << RESET_ADC));
+    unreset_block_mask_wait_blocking((1u << RESET_PWM) | (1u << RESET_ADC));
+
     stdio_init_all();
 
     sleep_ms(3000);
@@ -470,9 +486,18 @@ int main() {
     int doorbell_exit = multicore_doorbell_claim_unused(0b01, true);
     multicore_doorbell_clear_current_core(doorbell_exit);
 
-    sleep_ms(1000);
+    gpio_init(25);
+    gpio_set_dir(25, GPIO_OUT);
+    while (sys_time == (time_t)UNIX_INIT_SECOUNDS ||
+           (uint32_t)SYSTEM_BOOT_AWAIT_MS > to_ms_since_boot(get_absolute_time())) {
+        gpio_put(25, true);
+        sleep_ms(1000);
+        gpio_put(25, false);
+        sleep_ms(1000);
+    }
+    gpio_put(25, true);
     
-    /* SNTP */
+    /* NTP */
     check_loopback_mode_W6x00();
     uint8_t status;
     static uint8_t destip[16] = {0,};
@@ -567,6 +592,11 @@ int main() {
                     ret = sendto(SOCKET_NTP, sent_message + sent_size, sent_message_len - sent_size, destip, destport, addr_len);
                     if(ret < 0) return ret;
                     sent_size += ret; // Don't care SOCKERR_BUSY, because it is zero.
+                }
+                
+                if ((uint32_t)SYSTEM_REBOOT_MS < to_ms_since_boot(get_absolute_time())) {
+                    watchdog_enable(100,1);
+                    while (true) ;
                 }
             }
             break;
