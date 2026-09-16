@@ -10,6 +10,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE
         hardware_spi
         hardware_dma
         hardware_pio
+        hardware_powman
         ETHERNET_FILES
         IOLIBRARY_FILES
         PORT_COMMON_FILES

@@ -19,6 +19,7 @@
 
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/powman.h"
 #include "hardware/resets.h"
 #include "hardware/uart.h"
 #include "hardware/watchdog.h"
@@ -62,8 +63,8 @@
 
 
 /* NTP */
-#define UNIX_INIT_SECOUNDS 1780000000
-#define UNIX_NTP_DIFF_SECOUNDS  2208988800
+#define UNIX_INIT_MS 1780000000000
+#define UNIX_NTP_DIFF_MS  2208988800000
 #define SNTP_LEAP 0
 #define SNTP_VERSION 4
 #define SNTP_MODE 4
@@ -78,8 +79,8 @@
 #define SYSTEM_BOOT_AWAIT_MS 60000
 
 
-/* System Reboot Par milliseconds*/
-#define SYSTEM_REBOOT_MS 604800000
+/* System Reboot Par seconds*/
+#define SYSTEM_REBOOT_SEC 86400
 
 
 /* main */
@@ -136,11 +137,6 @@ int8_t check_loopback_mode_W6x00(){
     }
     return loopback_mode;
 }
-
-
-/* UTC */
-static time_t sys_time = (time_t)UNIX_INIT_SECOUNDS;
-static uint32_t sys_time_start_raw;
 
 /**
     ----------------------------------------------------------------------------------------------------
@@ -215,7 +211,7 @@ int hex2int(uint8_t c) {
 }
 
 
-time_t L76X_GET_ZDA(uint8_t* data) {
+uint64_t zda2utc(uint8_t* data) {
     int utc_begin_index = 0;
     int utc_end_index = 0;
     int day_begin_index = 0;
@@ -242,7 +238,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
     }
 
     if (!is_zda) {
-        return sys_time;
+        return UNIX_INIT_MS;
     }
 
 
@@ -267,7 +263,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         0 != strcmp(data[year_end_index + 5], '0') ||
         0 != strcmp(data[year_end_index + 6], '0') ||
         0 != strcmp(data[year_end_index + 7], '*')) {
-        return sys_time;
+        return UNIX_INIT_MS;
     }
     
 
@@ -281,7 +277,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         checksum = checksum + c2int(data[i]);
     }
     if(zda_checksum != checksum) {
-        return sys_time;
+        return UNIX_INIT_MS;
     }
 
 
@@ -307,7 +303,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[k]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_utc = temp_utc + c_int;
         is_carry = true;
@@ -315,7 +311,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         // UTC: H
         if (1 + utc_begin_index == k) {
             if (23 < temp_utc) {
-                return sys_time;
+                return UNIX_INIT_MS;
             }
             time_h = temp_utc;
             temp_utc = 0;
@@ -324,7 +320,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         // UTC: M
         } else if (3 + utc_begin_index == k) {
             if (59 < temp_utc) {
-                return sys_time;
+                return UNIX_INIT_MS;
             }
             time_m = temp_utc;
             temp_utc = 0;
@@ -333,7 +329,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         // UTC: S_int
         } else if (5 + utc_begin_index == k) {
             if (59 < temp_utc) {
-                return sys_time;
+                return UNIX_INIT_MS;
             }
             time_s_int = temp_utc;
             temp_utc = 0;
@@ -352,7 +348,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[n]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_y = temp_y + c_int;
         is_carry = true;
@@ -369,7 +365,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[n]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_m = temp_m + c_int;
         is_carry = true;
@@ -386,7 +382,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[n]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_d = temp_d + c_int;
         is_carry = true;
@@ -403,11 +399,49 @@ time_t L76X_GET_ZDA(uint8_t* data) {
     revision_time.tm_min = time_m;
     revision_time.tm_sec = time_s_int;
     revision_time.tm_isdst = -1;
-    
-    return mktime(&revision_time);
+    time_t rv_time_t =  mktime(&revision_time);
+
+    return (uint64_t)((uintmax_t)rv_time_t * 1000);
 }
 
 
+uint8_t pow_2(int exp) {
+    uint8_t r = 1;
+    for (int i = 0; i < exp; i++) {
+        r = r * 2;
+    }
+    return r;
+}
+
+
+void dcm2hex(uint32_t dcm, uint8_t hex[4]) {
+    uint8_t hex_index = 0;
+    uint8_t hex_temp = 0;
+    for (int i = 0; i < 32; i++) {
+        if (0 == dcm) {
+            hex[hex_index] = hex_temp;
+            break;
+        }
+        dcm = dcm * 2;
+        if (1 == (dcm / 1000)) {
+            if (0 == i) {
+                hex_temp = hex_temp + pow_2(7);
+            } else {
+                hex_temp = hex_temp + pow_2(7 - (i % 8));
+            }
+        }
+        dcm = dcm % 1000;
+
+        if ((i + 1) % 8 == 0) {
+            hex[hex_index] = hex_temp;
+            hex_index++;
+            hex_temp = 0;
+        }
+    }
+}
+
+
+static uint64_t uart_startup_time = 0;
 void on_uart_rx() {
     while (uart_is_readable(UART_ID)) {
         size_t length = (size_t)BUFFSIZE;
@@ -415,10 +449,14 @@ void on_uart_rx() {
         uint8_t* data_p;
         data_p = &data;
         uart_read_blocking(UART_ID, data_p, length);
-        time_t revision_time = L76X_GET_ZDA(data_p);
-        if (sys_time < revision_time) {
-            sys_time = revision_time;
-            sys_time_start_raw = time_us_32();
+        uint64_t revision = zda2utc(data_p);
+        if ((uint64_t)UNIX_INIT_MS < revision) {
+            powman_timer_set_ms(revision);
+        }
+        uart_startup_time++;
+        if (SYSTEM_REBOOT_SEC < uart_startup_time) {
+            watchdog_enable(100, 1);
+            while (1);
         }
     }
 }
@@ -447,6 +485,9 @@ void thread_gnss() {
     uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
     uart_set_fifo_enabled(UART_ID, false);
 
+    powman_timer_start();
+    powman_timer_set_ms(UNIX_INIT_MS);
+
     // Set handler
     irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
     irq_set_enabled(UART_IRQ, true);
@@ -457,6 +498,10 @@ void thread_gnss() {
 
 int main() {
     /* Initialize */
+    stdio_flush();
+
+    sleep_ms(3000);
+
     reset_block_num(RESET_PWM);
     unreset_block_num_wait_blocking(RESET_PWM);
     reset_block_mask((1u << RESET_PWM) | (1u << RESET_ADC));
@@ -488,8 +533,8 @@ int main() {
 
     gpio_init(25);
     gpio_set_dir(25, GPIO_OUT);
-    while (sys_time == (time_t)UNIX_INIT_SECOUNDS ||
-           (uint32_t)SYSTEM_BOOT_AWAIT_MS > to_ms_since_boot(get_absolute_time())) {
+    while ((uint64_t)(UNIX_INIT_MS + SYSTEM_BOOT_AWAIT_MS) > powman_timer_get_ms() ||
+           SYSTEM_BOOT_AWAIT_MS > (uart_startup_time * 1000)) {
         gpio_put(25, true);
         sleep_ms(1000);
         gpio_put(25, false);
@@ -497,7 +542,7 @@ int main() {
     }
     gpio_put(25, true);
     
-    /* NTP */
+    /* SNTP */
     check_loopback_mode_W6x00();
     uint8_t status;
     static uint8_t destip[16] = {0,};
@@ -517,7 +562,7 @@ int main() {
         {
         case SOCK_UDP:
             getsockopt(SOCKET_NTP, SO_RECVBUF, &received_size);
-            uint32_t sys_time_receive_raw = time_us_32();
+            uint64_t receive_timestamp = powman_timer_get_ms() + UNIX_NTP_DIFF_MS;
             ret = recvfrom(SOCKET_NTP, &buf_temp, received_size, (uint8_t*)&destip, (uint16_t*)&destport, &addr_len);
             if(ret <= 0) {
                 return ret;
@@ -537,33 +582,33 @@ int main() {
                 sent_message[15] = ".";
 
                 // receive_timestamp
-                long long sys_time_start = (long long)(int32_t)sys_time_start_raw;
-                long long sys_time_start_int = sys_time_start / MICROSECOND;
-                long long sys_time_start_dcm = sys_time_start % MICROSECOND;
-                long long sys_time_receive = (long long)(int32_t)sys_time_receive_raw;
-                long long sys_time_receive_int = sys_time_receive / MICROSECOND;
-                long long sys_time_receive_dcm = sys_time_receive % MICROSECOND;
-                long long receive_timestamp_int = (long long)UNIX_NTP_DIFF_SECOUNDS + (long long)((long)sys_time) + (sys_time_receive_int - sys_time_start_int);
-                long long receive_timestamp_dcm = sys_time_receive_dcm - sys_time_start_dcm;
+                uint32_t receive_timestamp_int = receive_timestamp / 1000;
+                uint32_t receive_timestamp_dcm = receive_timestamp % 1000;
+                uint8_t receive_timestamp_dcm_u8[4] = {0};
+                dcm2hex(receive_timestamp_dcm, receive_timestamp_dcm_u8);
                 sent_message[32] = (receive_timestamp_int >> 24) & 0xFF;
                 sent_message[33] = (receive_timestamp_int >> 16) & 0xFF;
                 sent_message[34] = (receive_timestamp_int >> 8) & 0xFF;
                 sent_message[35] = receive_timestamp_int & 0xFF;
-                sent_message[36] = (receive_timestamp_dcm >> 24) & 0xFF;
-                sent_message[37] = (receive_timestamp_dcm >> 16) & 0xFF;
-                sent_message[38] = (receive_timestamp_dcm >> 8) & 0xFF;
-                sent_message[39] = receive_timestamp_dcm & 0xFF;
+                sent_message[36] = receive_timestamp_dcm_u8[0];
+                sent_message[37] = receive_timestamp_dcm_u8[1];
+                sent_message[38] = receive_timestamp_dcm_u8[2];
+                sent_message[39] = receive_timestamp_dcm_u8[3];
 
                 // reference_timestamp
-                long long reference_timestamp = (long long)UNIX_NTP_DIFF_SECOUNDS + (long long)sys_time;
-                sent_message[16] = (reference_timestamp >> 24) & 0xFF;
-                sent_message[17] = (reference_timestamp >> 16) & 0xFF;
-                sent_message[18] = (reference_timestamp >> 8) & 0xFF;
-                sent_message[19] = reference_timestamp & 0xFF;
-                sent_message[20] = 0;
-                sent_message[21] = 0;
-                sent_message[22] = 0;
-                sent_message[23] = 0;
+                uint64_t reference_timestamp = powman_timer_get_ms() + UNIX_NTP_DIFF_MS;
+                uint32_t reference_timestamp_int = reference_timestamp / 1000;
+                uint32_t reference_timestamp_dcm = reference_timestamp % 1000;
+                uint8_t reference_timestamp_dcm_u8[4] = {0};
+                dcm2hex(reference_timestamp_dcm, reference_timestamp_dcm_u8);
+                sent_message[32] = (reference_timestamp_int >> 24) & 0xFF;
+                sent_message[33] = (reference_timestamp_int >> 16) & 0xFF;
+                sent_message[34] = (reference_timestamp_int >> 8) & 0xFF;
+                sent_message[35] = reference_timestamp_int & 0xFF;
+                sent_message[36] = reference_timestamp_dcm_u8[0];
+                sent_message[37] = reference_timestamp_dcm_u8[1];
+                sent_message[38] = reference_timestamp_dcm_u8[2];
+                sent_message[39] = reference_timestamp_dcm_u8[3];
 
                 // origin_timestamp;
                 for(int i = 0; i < 8; i++) {
@@ -571,32 +616,25 @@ int main() {
                 }
 
                 // transmit_timestamp
-                uint32_t sys_time_now_raw = time_us_32();
-                long long sys_time_now = (long long)(int32_t)sys_time_now_raw;
-                long long sys_time_now_int = sys_time_now / MICROSECOND;
-                long long sys_time_now_dcm = sys_time_now % MICROSECOND;
-                long long transmit_timestamp_int = (long long)UNIX_NTP_DIFF_SECOUNDS + (long long)((long)sys_time) + (sys_time_now_int - sys_time_start_int);
-                long long transmit_timestamp_dcm = sys_time_now_dcm - sys_time_start_dcm;
+                uint64_t transmit_timestamp = powman_timer_get_ms() + UNIX_NTP_DIFF_MS;
+                uint32_t transmit_timestamp_int = transmit_timestamp / 1000;
+                uint32_t transmit_timestamp_dcm = transmit_timestamp % 1000;
+                uint8_t transmit_timestamp_dcm_u8[4] = {0};
+                dcm2hex(transmit_timestamp_dcm, transmit_timestamp_dcm_u8);
                 sent_message[40] = (transmit_timestamp_int >> 24) & 0xFF;
                 sent_message[41] = (transmit_timestamp_int >> 16) & 0xFF;
                 sent_message[42] = (transmit_timestamp_int >> 8) & 0xFF;
                 sent_message[43] = transmit_timestamp_int & 0xFF;
-                sent_message[44] = (transmit_timestamp_dcm >> 24) & 0xFF;
-                sent_message[45] = (transmit_timestamp_dcm >> 16) & 0xFF;
-                sent_message[46] = (transmit_timestamp_dcm >> 8) & 0xFF;
-                sent_message[47] = transmit_timestamp_dcm & 0xFF;
-
+                sent_message[44] = transmit_timestamp_dcm_u8[0];
+                sent_message[45] = transmit_timestamp_dcm_u8[1];
+                sent_message[46] = transmit_timestamp_dcm_u8[2];
+                sent_message[47] = transmit_timestamp_dcm_u8[3];
                 uint16_t sent_message_len = SNTP_PACKET_SIZE;
                 uint16_t sent_size = 0;
                 while(sent_size != sent_message_len){
                     ret = sendto(SOCKET_NTP, sent_message + sent_size, sent_message_len - sent_size, destip, destport, addr_len);
                     if(ret < 0) return ret;
                     sent_size += ret; // Don't care SOCKERR_BUSY, because it is zero.
-                }
-                
-                if ((uint32_t)SYSTEM_REBOOT_MS < to_ms_since_boot(get_absolute_time())) {
-                    watchdog_enable(100,1);
-                    while (true) ;
                 }
             }
             break;
