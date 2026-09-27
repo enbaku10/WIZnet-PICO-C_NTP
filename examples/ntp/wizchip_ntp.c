@@ -51,7 +51,9 @@
 /* UART */
 #define UART_ID uart0
 #define UART_IRQ UART0_IRQ
-#define BAUD_RATE 9600
+#define BAUD_RATE_INIT 9600
+#define BAUD_RATE_MDF 115200
+#define POSITIONING_FREQUENCY 5
 #define DATA_BITS 8
 #define STOP_BITS 1
 #define PARITY UART_PARITY_NONE
@@ -79,8 +81,8 @@
 #define SYSTEM_BOOT_AWAIT_MS 60000
 
 
-/* System Reboot Par seconds*/
-#define SYSTEM_REBOOT_SEC 86400
+/* System Reboot Par milliseconds*/
+#define SYSTEM_REBOOT_MS 86400000
 
 
 /* main */
@@ -286,6 +288,7 @@ uint64_t zda2utc(uint8_t* data) {
     int time_h = 0;
     int time_m = 0;
     int time_s_int = 0;
+    int time_s_dcm = 0;
     int date_d = 0;
     int date_m = 0;
     int date_y = 0;
@@ -295,7 +298,7 @@ uint64_t zda2utc(uint8_t* data) {
         if (0 == strcmp(data[k], '.')) {
             temp_utc = 0;
             is_carry = false;
-            break;
+            continue;
         }
         if (is_carry) {
             temp_utc = temp_utc * 10;
@@ -334,6 +337,14 @@ uint64_t zda2utc(uint8_t* data) {
             time_s_int = temp_utc;
             temp_utc = 0;
             is_carry = false;
+
+        // UTC: S_dcm
+        } else if (8 + utc_begin_index == k) {
+            if (999 < temp_utc) {
+                return UNIX_INIT_MS;
+            }
+            time_s_dcm = temp_utc;
+            break;
         }
     }
 
@@ -401,7 +412,7 @@ uint64_t zda2utc(uint8_t* data) {
     revision_time.tm_isdst = -1;
     time_t rv_time_t =  mktime(&revision_time);
 
-    return (uint64_t)((uintmax_t)rv_time_t * 1000);
+    return (uint64_t)((uintmax_t)rv_time_t * 1000 + (time_s_dcm * 10));
 }
 
 
@@ -441,7 +452,7 @@ void dcm2hex(uint32_t dcm, uint8_t hex[4]) {
 }
 
 
-static uint64_t uart_startup_time = 0;
+static uint64_t uart_reads_number = 0;
 void on_uart_rx() {
     while (uart_is_readable(UART_ID)) {
         size_t length = (size_t)BUFFSIZE;
@@ -453,8 +464,8 @@ void on_uart_rx() {
         if ((uint64_t)UNIX_INIT_MS < revision) {
             powman_timer_set_ms(revision);
         }
-        uart_startup_time++;
-        if (SYSTEM_REBOOT_SEC < uart_startup_time) {
+        uart_reads_number++;
+        if (SYSTEM_REBOOT_MS < (uart_reads_number * 1000 / POSITIONING_FREQUENCY)) {
             watchdog_enable(100, 1);
             while (1);
         }
@@ -468,7 +479,7 @@ void on_uart_rx() {
 */
 void thread_gnss() {
     /* GNSS UART setup*/
-    uart_init(UART_ID, BAUD_RATE);
+    uart_init(UART_ID, BAUD_RATE_INIT);
     gpio_set_function(UART_TX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_TX_PIN));
     gpio_set_function(UART_RX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_RX_PIN));
 
@@ -483,7 +494,26 @@ void thread_gnss() {
 
     uart_set_hw_flow(UART_ID, false, false);
     uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
-    uart_set_fifo_enabled(UART_ID, false);
+    uart_set_fifo_enabled(UART_ID, true);
+
+    const uint8_t pcas01[] = {'$', 'P', 'C', 'A', 'S', '0', '1', ',', '5', '*', '1', '9', '\r', '\n'};
+    const uint8_t* pcas01_p;
+    pcas01_p = &pcas01;
+    uart_write_blocking(UART_ID, pcas01_p, strlen(pcas01_p));
+    sleep_ms(2000);
+    uart_set_baudrate(UART_ID, BAUD_RATE_MDF);
+
+    const uint8_t pcas04[] = {'$', 'P', 'C', 'A', 'S', '0', '4', ',', '1', '*', '1', '8', '\r', '\n'};
+    const uint8_t* pcas04_p;
+    pcas04_p = &pcas04;
+    uart_write_blocking(UART_ID, pcas04_p, strlen(pcas04_p));
+    sleep_ms(2000);
+
+    const uint8_t pcas02[] = {'$', 'P', 'C', 'A', 'S', '0', '2', ',', '2', '0', '0', '*', '1', 'D', '\r', '\n'};
+    const uint8_t* pcas02_p;
+    pcas02_p = &pcas02;
+    uart_write_blocking(UART_ID, pcas02_p, strlen(pcas02_p));
+    sleep_ms(2000);
 
     powman_timer_start();
     powman_timer_set_ms(UNIX_INIT_MS);
@@ -534,7 +564,7 @@ int main() {
     gpio_init(25);
     gpio_set_dir(25, GPIO_OUT);
     while ((uint64_t)(UNIX_INIT_MS + SYSTEM_BOOT_AWAIT_MS) > powman_timer_get_ms() ||
-           SYSTEM_BOOT_AWAIT_MS > (uart_startup_time * 1000)) {
+           SYSTEM_BOOT_AWAIT_MS > (uart_reads_number * 1000 / POSITIONING_FREQUENCY)) {
         gpio_put(25, true);
         sleep_ms(1000);
         gpio_put(25, false);
