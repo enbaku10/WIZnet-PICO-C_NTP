@@ -8,8 +8,6 @@ target_link_libraries(${TARGET_NAME} PRIVATE
         pico_stdlib
         pico_multicore
         hardware_spi
-        hardware_dma
-        hardware_pio
         hardware_powman
         ETHERNET_FILES
         IOLIBRARY_FILES

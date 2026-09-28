@@ -25,10 +25,9 @@
 #include "hardware/watchdog.h"
 
 #include "port_common.h"
+#include "socket.h"
 #include "wizchip_conf.h"
 #include "wizchip_spi.h"
-
-#include "socket.h"
 
 /**
     ----------------------------------------------------------------------------------------------------
@@ -67,19 +66,18 @@
 /* NTP */
 #define UNIX_INIT_MS 1780000000000
 #define UNIX_NTP_DIFF_MS  2208988800000
-#define SNTP_LEAP 0
-#define SNTP_VERSION 4
-#define SNTP_MODE 4
-#define SNTP_STRATUM 1
-#define SNTP_PRECISION 0
-#define SNTP_POLL_INTERVALL 0
-#define SNTP_PACKET_SIZE 48
+#define NTP_LEAP 0
+#define NTP_VERSION 4
+#define NTP_MODE 4
+#define NTP_STRATUM 1
+#define NTP_PRECISION 0
+#define NTP_POLL_INTERVALL 0
+#define NTP_PACKET_SIZE 48
 #define MICROSECOND 1000000
 
 
 /* System Boot Await milliseconds*/
 #define SYSTEM_BOOT_AWAIT_MS 60000
-
 
 /* System Reboot Par milliseconds*/
 #define SYSTEM_REBOOT_MS 86400000
@@ -227,8 +225,7 @@ uint64_t zda2utc(uint8_t* data) {
     for (int add = 0; add < BUFFSIZE - 71; add++) {
         if (0 == strcmp(data[add], '$') &&
             0 == strcmp(data[add + 1], 'G') && 
-            (0 == strcmp(data[add + 2], 'N') || 
-            0 == strcmp(data[add + 2], 'P')) && 
+            0 == strcmp(data[add + 2], 'P') && 
             0 == strcmp(data[add + 3], 'Z') &&
             0 == strcmp(data[add + 4], 'D') &&
             0 == strcmp(data[add + 5], 'A') &&
@@ -278,6 +275,7 @@ uint64_t zda2utc(uint8_t* data) {
         }
         checksum = checksum + c2int(data[i]);
     }
+
     if(zda_checksum != checksum) {
         return UNIX_INIT_MS;
     }
@@ -459,11 +457,14 @@ void on_uart_rx() {
         uint8_t data[BUFFSIZE];
         uint8_t* data_p;
         data_p = &data;
+
         uart_read_blocking(UART_ID, data_p, length);
         uint64_t revision = zda2utc(data_p);
+
         if ((uint64_t)UNIX_INIT_MS < revision) {
             powman_timer_set_ms(revision);
         }
+
         uart_reads_number++;
         if (SYSTEM_REBOOT_MS < (uart_reads_number * 1000 / POSITIONING_FREQUENCY)) {
             watchdog_enable(100, 1);
@@ -529,7 +530,6 @@ void thread_gnss() {
 int main() {
     /* Initialize */
     stdio_flush();
-
     sleep_ms(3000);
 
     reset_block_num(RESET_PWM);
@@ -538,7 +538,6 @@ int main() {
     unreset_block_mask_wait_blocking((1u << RESET_PWM) | (1u << RESET_ADC));
 
     stdio_init_all();
-
     sleep_ms(3000);
 
     wizchip_spi_initialize();
@@ -550,16 +549,12 @@ int main() {
     /* Get network information */
     network_initialize(g_net_info);
     print_network_information(g_net_info);
-
     sleep_ms(3000);
 
     /* Get UTC from GNSS */
     multicore_fifo_clear_irq();
     multicore_reset_core1();
     multicore_launch_core1(thread_gnss);
-
-    int doorbell_exit = multicore_doorbell_claim_unused(0b01, true);
-    multicore_doorbell_clear_current_core(doorbell_exit);
 
     gpio_init(25);
     gpio_set_dir(25, GPIO_OUT);
@@ -572,7 +567,7 @@ int main() {
     }
     gpio_put(25, true);
     
-    /* SNTP */
+    /* NTP */
     check_loopback_mode_W6x00();
     uint8_t status;
     static uint8_t destip[16] = {0,};
@@ -580,7 +575,7 @@ int main() {
     uint8_t addr_len;
     uint16_t ret;
     uint16_t received_size;
-    uint8_t buf_temp[SNTP_PACKET_SIZE];
+    uint8_t buf_temp[NTP_PACKET_SIZE];
 
     while (true) {
         getsockopt(SOCKET_NTP, SO_STATUS, &status);
@@ -599,13 +594,13 @@ int main() {
             }
             received_size = (uint16_t) ret;
 
-            if(received_size == SNTP_PACKET_SIZE) {
-                uint8_t sent_message[SNTP_PACKET_SIZE];
+            if(received_size == NTP_PACKET_SIZE) {
+                uint8_t sent_message[NTP_PACKET_SIZE];
                 // Header
-                sent_message[0] = ((SNTP_LEAP & 0x03)<<6) | ((SNTP_VERSION & 0x07)<<3) | ((SNTP_MODE & 0x07));
-                sent_message[1] = SNTP_STRATUM;
-                sent_message[2] = SNTP_POLL_INTERVALL;
-                sent_message[3] = SNTP_PRECISION;
+                sent_message[0] = ((NTP_LEAP & 0x03)<<6) | ((NTP_VERSION & 0x07)<<3) | ((NTP_MODE & 0x07));
+                sent_message[1] = NTP_STRATUM;
+                sent_message[2] = NTP_POLL_INTERVALL;
+                sent_message[3] = NTP_PRECISION;
                 sent_message[12] = "G";
                 sent_message[13] = "P";
                 sent_message[14] = "S";
@@ -659,7 +654,7 @@ int main() {
                 sent_message[45] = transmit_timestamp_dcm_u8[1];
                 sent_message[46] = transmit_timestamp_dcm_u8[2];
                 sent_message[47] = transmit_timestamp_dcm_u8[3];
-                uint16_t sent_message_len = SNTP_PACKET_SIZE;
+                uint16_t sent_message_len = NTP_PACKET_SIZE;
                 uint16_t sent_size = 0;
                 while(sent_size != sent_message_len){
                     ret = sendto(SOCKET_NTP, sent_message + sent_size, sent_message_len - sent_size, destip, destport, addr_len);
