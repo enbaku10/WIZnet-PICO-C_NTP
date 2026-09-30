@@ -19,15 +19,15 @@
 
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/powman.h"
 #include "hardware/resets.h"
 #include "hardware/uart.h"
 #include "hardware/watchdog.h"
 
 #include "port_common.h"
+#include "socket.h"
 #include "wizchip_conf.h"
 #include "wizchip_spi.h"
-
-#include "socket.h"
 
 /**
     ----------------------------------------------------------------------------------------------------
@@ -50,7 +50,9 @@
 /* UART */
 #define UART_ID uart0
 #define UART_IRQ UART0_IRQ
-#define BAUD_RATE 9600
+#define BAUD_RATE_INIT 9600
+#define BAUD_RATE_MDF 115200
+#define POSITIONING_FREQUENCY 5
 #define DATA_BITS 8
 #define STOP_BITS 1
 #define PARITY UART_PARITY_NONE
@@ -62,24 +64,23 @@
 
 
 /* NTP */
-#define UNIX_INIT_SECOUNDS 1780000000
-#define UNIX_NTP_DIFF_SECOUNDS  2208988800
-#define SNTP_LEAP 0
-#define SNTP_VERSION 4
-#define SNTP_MODE 4
-#define SNTP_STRATUM 1
-#define SNTP_PRECISION 0
-#define SNTP_POLL_INTERVALL 0
-#define SNTP_PACKET_SIZE 48
+#define UNIX_INIT_MS 1780000000000
+#define UNIX_NTP_DIFF_MS  2208988800000
+#define NTP_LEAP 0
+#define NTP_VERSION 4
+#define NTP_MODE 4
+#define NTP_STRATUM 1
+#define NTP_PRECISION 0
+#define NTP_POLL_INTERVALL 0
+#define NTP_PACKET_SIZE 48
 #define MICROSECOND 1000000
 
 
 /* System Boot Await milliseconds*/
 #define SYSTEM_BOOT_AWAIT_MS 60000
 
-
 /* System Reboot Par milliseconds*/
-#define SYSTEM_REBOOT_MS 604800000
+#define SYSTEM_REBOOT_MS 86400000
 
 
 /* main */
@@ -136,11 +137,6 @@ int8_t check_loopback_mode_W6x00(){
     }
     return loopback_mode;
 }
-
-
-/* UTC */
-static time_t sys_time = (time_t)UNIX_INIT_SECOUNDS;
-static uint32_t sys_time_start_raw;
 
 /**
     ----------------------------------------------------------------------------------------------------
@@ -215,7 +211,7 @@ int hex2int(uint8_t c) {
 }
 
 
-time_t L76X_GET_ZDA(uint8_t* data) {
+uint64_t zda2utc(uint8_t* data) {
     int utc_begin_index = 0;
     int utc_end_index = 0;
     int day_begin_index = 0;
@@ -229,8 +225,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
     for (int add = 0; add < BUFFSIZE - 71; add++) {
         if (0 == strcmp(data[add], '$') &&
             0 == strcmp(data[add + 1], 'G') && 
-            (0 == strcmp(data[add + 2], 'N') || 
-            0 == strcmp(data[add + 2], 'P')) && 
+            0 == strcmp(data[add + 2], 'P') && 
             0 == strcmp(data[add + 3], 'Z') &&
             0 == strcmp(data[add + 4], 'D') &&
             0 == strcmp(data[add + 5], 'A') &&
@@ -242,7 +237,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
     }
 
     if (!is_zda) {
-        return sys_time;
+        return UNIX_INIT_MS;
     }
 
 
@@ -267,7 +262,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         0 != strcmp(data[year_end_index + 5], '0') ||
         0 != strcmp(data[year_end_index + 6], '0') ||
         0 != strcmp(data[year_end_index + 7], '*')) {
-        return sys_time;
+        return UNIX_INIT_MS;
     }
     
 
@@ -280,8 +275,9 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         }
         checksum = checksum + c2int(data[i]);
     }
+
     if(zda_checksum != checksum) {
-        return sys_time;
+        return UNIX_INIT_MS;
     }
 
 
@@ -290,6 +286,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
     int time_h = 0;
     int time_m = 0;
     int time_s_int = 0;
+    int time_s_dcm = 0;
     int date_d = 0;
     int date_m = 0;
     int date_y = 0;
@@ -299,7 +296,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         if (0 == strcmp(data[k], '.')) {
             temp_utc = 0;
             is_carry = false;
-            break;
+            continue;
         }
         if (is_carry) {
             temp_utc = temp_utc * 10;
@@ -307,7 +304,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[k]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_utc = temp_utc + c_int;
         is_carry = true;
@@ -315,7 +312,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         // UTC: H
         if (1 + utc_begin_index == k) {
             if (23 < temp_utc) {
-                return sys_time;
+                return UNIX_INIT_MS;
             }
             time_h = temp_utc;
             temp_utc = 0;
@@ -324,7 +321,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         // UTC: M
         } else if (3 + utc_begin_index == k) {
             if (59 < temp_utc) {
-                return sys_time;
+                return UNIX_INIT_MS;
             }
             time_m = temp_utc;
             temp_utc = 0;
@@ -333,11 +330,19 @@ time_t L76X_GET_ZDA(uint8_t* data) {
         // UTC: S_int
         } else if (5 + utc_begin_index == k) {
             if (59 < temp_utc) {
-                return sys_time;
+                return UNIX_INIT_MS;
             }
             time_s_int = temp_utc;
             temp_utc = 0;
             is_carry = false;
+
+        // UTC: S_dcm
+        } else if (8 + utc_begin_index == k) {
+            if (999 < temp_utc) {
+                return UNIX_INIT_MS;
+            }
+            time_s_dcm = temp_utc;
+            break;
         }
     }
 
@@ -352,7 +357,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[n]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_y = temp_y + c_int;
         is_carry = true;
@@ -369,7 +374,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[n]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_m = temp_m + c_int;
         is_carry = true;
@@ -386,7 +391,7 @@ time_t L76X_GET_ZDA(uint8_t* data) {
 
         int c_int = c2int(data[n]);
         if (100 == c_int) {
-            return sys_time;
+            return UNIX_INIT_MS;
         }
         temp_d = temp_d + c_int;
         is_carry = true;
@@ -403,22 +408,67 @@ time_t L76X_GET_ZDA(uint8_t* data) {
     revision_time.tm_min = time_m;
     revision_time.tm_sec = time_s_int;
     revision_time.tm_isdst = -1;
-    
-    return mktime(&revision_time);
+    time_t rv_time_t =  mktime(&revision_time);
+
+    return (uint64_t)((uintmax_t)rv_time_t * 1000 + (time_s_dcm * 10));
 }
 
 
+uint8_t pow_2(int exp) {
+    uint8_t r = 1;
+    for (int i = 0; i < exp; i++) {
+        r = r * 2;
+    }
+    return r;
+}
+
+
+void dcm2hex(uint32_t dcm, uint8_t hex[4]) {
+    uint8_t hex_index = 0;
+    uint8_t hex_temp = 0;
+    for (int i = 0; i < 32; i++) {
+        if (0 == dcm) {
+            hex[hex_index] = hex_temp;
+            break;
+        }
+        dcm = dcm * 2;
+        if (1 == (dcm / 1000)) {
+            if (0 == i) {
+                hex_temp = hex_temp + pow_2(7);
+            } else {
+                hex_temp = hex_temp + pow_2(7 - (i % 8));
+            }
+        }
+        dcm = dcm % 1000;
+
+        if ((i + 1) % 8 == 0) {
+            hex[hex_index] = hex_temp;
+            hex_index++;
+            hex_temp = 0;
+        }
+    }
+}
+
+
+static uint64_t uart_reads_number = 0;
 void on_uart_rx() {
     while (uart_is_readable(UART_ID)) {
         size_t length = (size_t)BUFFSIZE;
         uint8_t data[BUFFSIZE];
         uint8_t* data_p;
         data_p = &data;
+
         uart_read_blocking(UART_ID, data_p, length);
-        time_t revision_time = L76X_GET_ZDA(data_p);
-        if (sys_time < revision_time) {
-            sys_time = revision_time;
-            sys_time_start_raw = time_us_32();
+        uint64_t revision = zda2utc(data_p);
+
+        if ((uint64_t)UNIX_INIT_MS < revision) {
+            powman_timer_set_ms(revision);
+        }
+
+        uart_reads_number++;
+        if (SYSTEM_REBOOT_MS < (uart_reads_number * 1000 / POSITIONING_FREQUENCY)) {
+            watchdog_enable(100, 1);
+            while (1);
         }
     }
 }
@@ -430,7 +480,7 @@ void on_uart_rx() {
 */
 void thread_gnss() {
     /* GNSS UART setup*/
-    uart_init(UART_ID, BAUD_RATE);
+    uart_init(UART_ID, BAUD_RATE_INIT);
     gpio_set_function(UART_TX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_TX_PIN));
     gpio_set_function(UART_RX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_RX_PIN));
 
@@ -445,7 +495,29 @@ void thread_gnss() {
 
     uart_set_hw_flow(UART_ID, false, false);
     uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
-    uart_set_fifo_enabled(UART_ID, false);
+    uart_set_fifo_enabled(UART_ID, true);
+
+    const uint8_t pcas01[] = {'$', 'P', 'C', 'A', 'S', '0', '1', ',', '5', '*', '1', '9', '\r', '\n'};
+    const uint8_t* pcas01_p;
+    pcas01_p = &pcas01;
+    uart_write_blocking(UART_ID, pcas01_p, strlen(pcas01_p));
+    sleep_ms(2000);
+    uart_set_baudrate(UART_ID, BAUD_RATE_MDF);
+
+    const uint8_t pcas04[] = {'$', 'P', 'C', 'A', 'S', '0', '4', ',', '1', '*', '1', '8', '\r', '\n'};
+    const uint8_t* pcas04_p;
+    pcas04_p = &pcas04;
+    uart_write_blocking(UART_ID, pcas04_p, strlen(pcas04_p));
+    sleep_ms(2000);
+
+    const uint8_t pcas02[] = {'$', 'P', 'C', 'A', 'S', '0', '2', ',', '2', '0', '0', '*', '1', 'D', '\r', '\n'};
+    const uint8_t* pcas02_p;
+    pcas02_p = &pcas02;
+    uart_write_blocking(UART_ID, pcas02_p, strlen(pcas02_p));
+    sleep_ms(2000);
+
+    powman_timer_start();
+    powman_timer_set_ms(UNIX_INIT_MS);
 
     // Set handler
     irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
@@ -457,13 +529,15 @@ void thread_gnss() {
 
 int main() {
     /* Initialize */
+    stdio_flush();
+    sleep_ms(3000);
+
     reset_block_num(RESET_PWM);
     unreset_block_num_wait_blocking(RESET_PWM);
     reset_block_mask((1u << RESET_PWM) | (1u << RESET_ADC));
     unreset_block_mask_wait_blocking((1u << RESET_PWM) | (1u << RESET_ADC));
 
     stdio_init_all();
-
     sleep_ms(3000);
 
     wizchip_spi_initialize();
@@ -475,7 +549,6 @@ int main() {
     /* Get network information */
     network_initialize(g_net_info);
     print_network_information(g_net_info);
-
     sleep_ms(3000);
 
     /* Get UTC from GNSS */
@@ -483,13 +556,10 @@ int main() {
     multicore_reset_core1();
     multicore_launch_core1(thread_gnss);
 
-    int doorbell_exit = multicore_doorbell_claim_unused(0b01, true);
-    multicore_doorbell_clear_current_core(doorbell_exit);
-
     gpio_init(25);
     gpio_set_dir(25, GPIO_OUT);
-    while (sys_time == (time_t)UNIX_INIT_SECOUNDS ||
-           (uint32_t)SYSTEM_BOOT_AWAIT_MS > to_ms_since_boot(get_absolute_time())) {
+    while ((uint64_t)(UNIX_INIT_MS + SYSTEM_BOOT_AWAIT_MS) > powman_timer_get_ms() ||
+           SYSTEM_BOOT_AWAIT_MS > (uart_reads_number * 1000 / POSITIONING_FREQUENCY)) {
         gpio_put(25, true);
         sleep_ms(1000);
         gpio_put(25, false);
@@ -505,7 +575,7 @@ int main() {
     uint8_t addr_len;
     uint16_t ret;
     uint16_t received_size;
-    uint8_t buf_temp[SNTP_PACKET_SIZE];
+    uint8_t buf_temp[NTP_PACKET_SIZE];
 
     while (true) {
         getsockopt(SOCKET_NTP, SO_STATUS, &status);
@@ -517,53 +587,53 @@ int main() {
         {
         case SOCK_UDP:
             getsockopt(SOCKET_NTP, SO_RECVBUF, &received_size);
-            uint32_t sys_time_receive_raw = time_us_32();
+            uint64_t receive_timestamp = powman_timer_get_ms() + UNIX_NTP_DIFF_MS;
             ret = recvfrom(SOCKET_NTP, &buf_temp, received_size, (uint8_t*)&destip, (uint16_t*)&destport, &addr_len);
             if(ret <= 0) {
                 return ret;
             }
             received_size = (uint16_t) ret;
 
-            if(received_size == SNTP_PACKET_SIZE) {
-                uint8_t sent_message[SNTP_PACKET_SIZE];
+            if(received_size == NTP_PACKET_SIZE) {
+                uint8_t sent_message[NTP_PACKET_SIZE];
                 // Header
-                sent_message[0] = ((SNTP_LEAP & 0x03)<<6) | ((SNTP_VERSION & 0x07)<<3) | ((SNTP_MODE & 0x07));
-                sent_message[1] = SNTP_STRATUM;
-                sent_message[2] = SNTP_POLL_INTERVALL;
-                sent_message[3] = SNTP_PRECISION;
+                sent_message[0] = ((NTP_LEAP & 0x03)<<6) | ((NTP_VERSION & 0x07)<<3) | ((NTP_MODE & 0x07));
+                sent_message[1] = NTP_STRATUM;
+                sent_message[2] = NTP_POLL_INTERVALL;
+                sent_message[3] = NTP_PRECISION;
                 sent_message[12] = "G";
                 sent_message[13] = "P";
                 sent_message[14] = "S";
                 sent_message[15] = ".";
 
                 // receive_timestamp
-                long long sys_time_start = (long long)(int32_t)sys_time_start_raw;
-                long long sys_time_start_int = sys_time_start / MICROSECOND;
-                long long sys_time_start_dcm = sys_time_start % MICROSECOND;
-                long long sys_time_receive = (long long)(int32_t)sys_time_receive_raw;
-                long long sys_time_receive_int = sys_time_receive / MICROSECOND;
-                long long sys_time_receive_dcm = sys_time_receive % MICROSECOND;
-                long long receive_timestamp_int = (long long)UNIX_NTP_DIFF_SECOUNDS + (long long)((long)sys_time) + (sys_time_receive_int - sys_time_start_int);
-                long long receive_timestamp_dcm = sys_time_receive_dcm - sys_time_start_dcm;
+                uint32_t receive_timestamp_int = receive_timestamp / 1000;
+                uint32_t receive_timestamp_dcm = receive_timestamp % 1000;
+                uint8_t receive_timestamp_dcm_u8[4] = {0};
+                dcm2hex(receive_timestamp_dcm, receive_timestamp_dcm_u8);
                 sent_message[32] = (receive_timestamp_int >> 24) & 0xFF;
                 sent_message[33] = (receive_timestamp_int >> 16) & 0xFF;
                 sent_message[34] = (receive_timestamp_int >> 8) & 0xFF;
                 sent_message[35] = receive_timestamp_int & 0xFF;
-                sent_message[36] = (receive_timestamp_dcm >> 24) & 0xFF;
-                sent_message[37] = (receive_timestamp_dcm >> 16) & 0xFF;
-                sent_message[38] = (receive_timestamp_dcm >> 8) & 0xFF;
-                sent_message[39] = receive_timestamp_dcm & 0xFF;
+                sent_message[36] = receive_timestamp_dcm_u8[0];
+                sent_message[37] = receive_timestamp_dcm_u8[1];
+                sent_message[38] = receive_timestamp_dcm_u8[2];
+                sent_message[39] = receive_timestamp_dcm_u8[3];
 
                 // reference_timestamp
-                long long reference_timestamp = (long long)UNIX_NTP_DIFF_SECOUNDS + (long long)sys_time;
-                sent_message[16] = (reference_timestamp >> 24) & 0xFF;
-                sent_message[17] = (reference_timestamp >> 16) & 0xFF;
-                sent_message[18] = (reference_timestamp >> 8) & 0xFF;
-                sent_message[19] = reference_timestamp & 0xFF;
-                sent_message[20] = 0;
-                sent_message[21] = 0;
-                sent_message[22] = 0;
-                sent_message[23] = 0;
+                uint64_t reference_timestamp = powman_timer_get_ms() + UNIX_NTP_DIFF_MS;
+                uint32_t reference_timestamp_int = reference_timestamp / 1000;
+                uint32_t reference_timestamp_dcm = reference_timestamp % 1000;
+                uint8_t reference_timestamp_dcm_u8[4] = {0};
+                dcm2hex(reference_timestamp_dcm, reference_timestamp_dcm_u8);
+                sent_message[32] = (reference_timestamp_int >> 24) & 0xFF;
+                sent_message[33] = (reference_timestamp_int >> 16) & 0xFF;
+                sent_message[34] = (reference_timestamp_int >> 8) & 0xFF;
+                sent_message[35] = reference_timestamp_int & 0xFF;
+                sent_message[36] = reference_timestamp_dcm_u8[0];
+                sent_message[37] = reference_timestamp_dcm_u8[1];
+                sent_message[38] = reference_timestamp_dcm_u8[2];
+                sent_message[39] = reference_timestamp_dcm_u8[3];
 
                 // origin_timestamp;
                 for(int i = 0; i < 8; i++) {
@@ -571,32 +641,25 @@ int main() {
                 }
 
                 // transmit_timestamp
-                uint32_t sys_time_now_raw = time_us_32();
-                long long sys_time_now = (long long)(int32_t)sys_time_now_raw;
-                long long sys_time_now_int = sys_time_now / MICROSECOND;
-                long long sys_time_now_dcm = sys_time_now % MICROSECOND;
-                long long transmit_timestamp_int = (long long)UNIX_NTP_DIFF_SECOUNDS + (long long)((long)sys_time) + (sys_time_now_int - sys_time_start_int);
-                long long transmit_timestamp_dcm = sys_time_now_dcm - sys_time_start_dcm;
+                uint64_t transmit_timestamp = powman_timer_get_ms() + UNIX_NTP_DIFF_MS;
+                uint32_t transmit_timestamp_int = transmit_timestamp / 1000;
+                uint32_t transmit_timestamp_dcm = transmit_timestamp % 1000;
+                uint8_t transmit_timestamp_dcm_u8[4] = {0};
+                dcm2hex(transmit_timestamp_dcm, transmit_timestamp_dcm_u8);
                 sent_message[40] = (transmit_timestamp_int >> 24) & 0xFF;
                 sent_message[41] = (transmit_timestamp_int >> 16) & 0xFF;
                 sent_message[42] = (transmit_timestamp_int >> 8) & 0xFF;
                 sent_message[43] = transmit_timestamp_int & 0xFF;
-                sent_message[44] = (transmit_timestamp_dcm >> 24) & 0xFF;
-                sent_message[45] = (transmit_timestamp_dcm >> 16) & 0xFF;
-                sent_message[46] = (transmit_timestamp_dcm >> 8) & 0xFF;
-                sent_message[47] = transmit_timestamp_dcm & 0xFF;
-
-                uint16_t sent_message_len = SNTP_PACKET_SIZE;
+                sent_message[44] = transmit_timestamp_dcm_u8[0];
+                sent_message[45] = transmit_timestamp_dcm_u8[1];
+                sent_message[46] = transmit_timestamp_dcm_u8[2];
+                sent_message[47] = transmit_timestamp_dcm_u8[3];
+                uint16_t sent_message_len = NTP_PACKET_SIZE;
                 uint16_t sent_size = 0;
                 while(sent_size != sent_message_len){
                     ret = sendto(SOCKET_NTP, sent_message + sent_size, sent_message_len - sent_size, destip, destport, addr_len);
                     if(ret < 0) return ret;
                     sent_size += ret; // Don't care SOCKERR_BUSY, because it is zero.
-                }
-                
-                if ((uint32_t)SYSTEM_REBOOT_MS < to_ms_since_boot(get_absolute_time())) {
-                    watchdog_enable(100,1);
-                    while (true) ;
                 }
             }
             break;
