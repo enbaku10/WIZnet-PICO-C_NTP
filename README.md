@@ -1,6 +1,6 @@
 # Getting Started with NTP Server Examples
 
-These sections will guide you through a series of steps from configuring development environment to running ethernet examples using the **WIZnet's ethernet products** and **WIZnet's GNSS products**.
+These sections will guide you through a series of steps from configuring development environment to running ethernet examples using the **WIZnet's ethernet products** and **Waveshare's GNSS products**.
 
 - [Getting Started with NTP Server Examples](#getting-started-with-ntp-server-examples)
   - [Development environment configuration](#development-environment-configuration)
@@ -38,13 +38,13 @@ Raspberry Pi Pico GNSS expansion board module integrates **L76K**.
 
 | Board/Module Name              | Chip  | Interface     | Communication protocol  | Notes                                  |
 |--------------------------------|----------------|---------------|---------------|----------------------------------------|
-| **[Pico-GPS-L76K][link-pico-gps-l76k]** | L76K | UART | NMEA 0183, PMTK | Supports Multi-GNSS systems: GPS, BeiDou (BDS), GLONASS and QZSS |
+| **[Pico-GPS-L76K][link-pico-gps-l76k]** | L76K | UART | NMEA 0183, PCAS | Supports Multi-GNSS systems: GPS, BeiDou (BDS), GLONASS and QZSS |
 
 
 <a name="ntp_server_example_structure"></a>
 ## NTP Server example structure
 
-Examples are available at '**WIZnet-PICO-C/examples/ntp**' directory. 
+Examples are available at '**WIZnet-PICO-C_NTP/examples/ntp**' directory. 
 
 Note that **ioLibrary_Driver**, **mbedtls**, **pico-sdk** are needed to run ethernet examples.
 
@@ -52,15 +52,15 @@ Note that **ioLibrary_Driver**, **mbedtls**, **pico-sdk** are needed to run ethe
 - **mbedtls** library supports additional algorithms and support related to SSL and TLS connections.
 - **pico-sdk** is made available by Pico to enable developers to build software applications for the Pico platform.
 
-Libraries are located in the '**WIZnet-PICO-C/libraries/**' directory.
+Libraries are located in the '**WIZnet-PICO-C_NTP/libraries/**' directory.
 
 - [**ioLibrary_Driver**][link-iolibrary_driver]
 - [**mbedtls**][link-mbedtls]
 - [**pico-sdk**][link-pico_sdk]
 
-If you want to modify the code that MCU-dependent and use a MCU other than **RP2040**, you can modify it in the '**WIZnet-PICO-C/port/**' directory.
+If you want to modify the code that MCU-dependent and use a MCU other than **RP2040**, you can modify it in the '**WIZnet-PICO-C_NTP/port/**' directory.
 
-port is located in the '**WIZnet-PICO-C/port/**' directory.
+port is located in the '**WIZnet-PICO-C_NTP/port/**' directory.
 
 - [**ioLibrary_Driver**][link-port_iolibrary_driver]
 - [**mbedtls**][link-port_mbedtls]
@@ -85,7 +85,7 @@ If the ethernet examples are cloned, the library set as a submodule is an empty 
 cd [user path]
 
 // e.g.
-cd D:/WIZnet-PICO_
+cd D:/WIZnet-PICO_NTP
 
 /* Clone */
 git clone --recurse-submodules https://github.com/enbaku10/WIZnet-PICO-C_NTP.git
