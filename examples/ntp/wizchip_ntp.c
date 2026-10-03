@@ -60,28 +60,26 @@
 #define UART_RX_PIN 1
 #define FORCE_PIN 14
 #define STANDBY_PIN 17
-#define BUFFSIZE 1100
+#define BUFFSIZE (1024 * 2)
 
 
 /* NTP */
-#define UNIX_INIT_MS 1780000000000
-#define UNIX_NTP_DIFF_MS  2208988800000
+#define UNIX_INIT_MS (1780000000 * 1000)
+#define UNIX_NTP_DIFF_MS  (2208988800 * 1000)
 #define NTP_LEAP 0
 #define NTP_VERSION 4
 #define NTP_MODE 4
 #define NTP_STRATUM 1
-#define NTP_PRECISION 0
-#define NTP_POLL_INTERVALL 0
+#define NTP_PRECISION 3
+#define NTP_POLL_INTERVALL 2
 #define NTP_PACKET_SIZE 48
-#define MICROSECOND 1000000
 
 
 /* System Boot Await milliseconds*/
-#define SYSTEM_BOOT_AWAIT_MS 60000
+#define SYSTEM_BOOT_AWAIT_MS (60 * 1000)
 
 /* System Reboot Par milliseconds*/
-#define SYSTEM_REBOOT_MS 86400000
-
+#define SYSTEM_REBOOT_MS (86400 * 1000)
 
 /* main */
 
@@ -230,53 +228,53 @@ uint64_t zda2utc(uint8_t* data) {
             0 == strcmp(data[add + 4], 'D') &&
             0 == strcmp(data[add + 5], 'A') &&
             0 == strcmp(data[add + 6], ',')) {
-            is_zda = true;
             utc_begin_index = add + 7;
+
+            // Search index
+            for (int j = utc_begin_index; j < BUFFSIZE - 71; j++) {
+                if (0 == strcmp(data[j], ',')) {
+                    utc_end_index = j - 1;
+                    break;
+                }
+            }
+            day_begin_index = utc_end_index + 2;
+            day_end_index = day_begin_index + 1;
+            month_begin_index = day_end_index + 2;
+            month_end_index = month_begin_index + 1;
+            year_begin_index = month_end_index + 2;
+            year_end_index = year_begin_index + 3;
+
+            if (0 != strcmp(data[year_end_index + 1], ',') ||
+                0 != strcmp(data[year_end_index + 2], '0') ||
+                0 != strcmp(data[year_end_index + 3], '0') ||
+                0 != strcmp(data[year_end_index + 4], ',') ||
+                0 != strcmp(data[year_end_index + 5], '0') ||
+                0 != strcmp(data[year_end_index + 6], '0') ||
+                0 != strcmp(data[year_end_index + 7], '*')) {
+                continue;
+            }
+            
+
+            // Checksum
+            int zda_checksum = hex2int(data[year_end_index + 8]) * 10 + hex2int(data[year_end_index + 9]);
+            int checksum = 0;
+            for(int i = utc_begin_index; i <= year_end_index; i++) {
+                if(100 == c2int(data[i])){
+                    continue;
+                }
+                checksum = checksum + c2int(data[i]);
+            }
+
+            if(zda_checksum != checksum) {
+                continue;
+            }
+
+            is_zda = true;
             break;
         }
     }
 
     if (!is_zda) {
-        return UNIX_INIT_MS;
-    }
-
-
-    // Search index
-    for (int j = utc_begin_index; j < BUFFSIZE - 71; j++) {
-        if (0 == strcmp(data[j], ',')) {
-            utc_end_index = j - 1;
-            break;
-        }
-    }
-    day_begin_index = utc_end_index + 2;
-    day_end_index = day_begin_index + 1;
-    month_begin_index = day_end_index + 2;
-    month_end_index = month_begin_index + 1;
-    year_begin_index = month_end_index + 2;
-    year_end_index = year_begin_index + 3;
-
-    if (0 != strcmp(data[year_end_index + 1], ',') ||
-        0 != strcmp(data[year_end_index + 2], '0') ||
-        0 != strcmp(data[year_end_index + 3], '0') ||
-        0 != strcmp(data[year_end_index + 4], ',') ||
-        0 != strcmp(data[year_end_index + 5], '0') ||
-        0 != strcmp(data[year_end_index + 6], '0') ||
-        0 != strcmp(data[year_end_index + 7], '*')) {
-        return UNIX_INIT_MS;
-    }
-    
-
-    // Checksum
-    int zda_checksum = hex2int(data[year_end_index + 8]) * 10 + hex2int(data[year_end_index + 9]);
-    int checksum = 0;
-    for(int i = utc_begin_index; i <= year_end_index; i++) {
-        if(100 == c2int(data[i])){
-            continue;
-        }
-        checksum = checksum + c2int(data[i]);
-    }
-
-    if(zda_checksum != checksum) {
         return UNIX_INIT_MS;
     }
 
@@ -461,7 +459,7 @@ void on_uart_rx() {
         uart_read_blocking(UART_ID, data_p, length);
         uint64_t revision = zda2utc(data_p);
 
-        if ((uint64_t)UNIX_INIT_MS < revision) {
+        if ((uint64_t)UNIX_INIT_MS != revision) {
             powman_timer_set_ms(revision);
         }
 
@@ -503,6 +501,7 @@ void thread_gnss() {
     uart_write_blocking(UART_ID, pcas01_p, strlen(pcas01_p));
     sleep_ms(2000);
     uart_set_baudrate(UART_ID, BAUD_RATE_MDF);
+    sleep_ms(2000);
 
     const uint8_t pcas04[] = {'$', 'P', 'C', 'A', 'S', '0', '4', ',', '1', '*', '1', '8', '\r', '\n'};
     const uint8_t* pcas04_p;
@@ -517,7 +516,6 @@ void thread_gnss() {
     sleep_ms(2000);
 
     powman_timer_start();
-    powman_timer_set_ms(UNIX_INIT_MS);
 
     // Set handler
     irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
@@ -601,10 +599,10 @@ int main() {
                 sent_message[1] = NTP_STRATUM;
                 sent_message[2] = NTP_POLL_INTERVALL;
                 sent_message[3] = NTP_PRECISION;
-                sent_message[12] = "G";
-                sent_message[13] = "P";
-                sent_message[14] = "S";
-                sent_message[15] = ".";
+                sent_message[12] = 'G';
+                sent_message[13] = 'P';
+                sent_message[14] = 'S';
+                sent_message[15] = ' ';
 
                 // receive_timestamp
                 uint32_t receive_timestamp_int = receive_timestamp / 1000;
